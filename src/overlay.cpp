@@ -59,15 +59,10 @@ namespace {
 
                 RECT sel = GetNormalizedSelection();
 
-                // ============================================================
-                // WICHTIG: Overlay ZUERST verstecken, DANN den Screenshot machen!
-                // Sonst wird das abgedunkelte Overlay mitfotografiert und
-                // die OCR erkennt keinen Text auf dem dunklen Hintergrund.
-                // ============================================================
+                
                 ShowWindow(hWnd, SW_HIDE);
 
-                // Kurz warten bis Windows Desktop Compositor (DWM) das Overlay
-                // vollständig vom Bildschirm entfernt hat
+                // Kurz warten bis Windows Desktop Compositor (DWM) das Overlay vollständig vom Bildschirm entfernt hat
                 Sleep(150);
 
                 // Fenster endgültig zerstören
@@ -87,7 +82,6 @@ namespace {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
 
-            // Double buffering für flackerfreie Darstellung
             HDC hMemDC = CreateCompatibleDC(hdc);
             HBITMAP hMemBmp = CreateCompatibleBitmap(hdc, g_vWidth, g_vHeight);
             HGDIOBJ hOldBmp = SelectObject(hMemDC, hMemBmp);
@@ -177,12 +171,11 @@ namespace Overlay {
             wc.lpfnWndProc = OverlayWndProc;
             wc.hInstance = hInstance;
             wc.lpszClassName = CLASS_NAME;
-            wc.hCursor = LoadCursor(nullptr, IDC_CROSS); // Fadenkreuz-Cursor
+            wc.hCursor = LoadCursor(nullptr, IDC_CROSS); // Cursor
             RegisterClassEx(&wc);
             isRegistered = true;
         }
 
-        // Layered Window für Transparenz (Alpha + ColorKey)
         g_hOverlayWnd = CreateWindowEx(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
             CLASS_NAME,
@@ -193,8 +186,7 @@ namespace Overlay {
         );
 
         if (g_hOverlayWnd) {
-            // Alpha=100 → leicht transparent abgedunkelt
-            // RGB(255,0,255) = Magenta → wird komplett durchsichtig (für die Auswahl)
+            // RGB(255,0,255) = Magenta → wird komplett durchsichtig (für die Frei-Auswahl)
             SetLayeredWindowAttributes(g_hOverlayWnd, RGB(255, 0, 255), 100, LWA_COLORKEY | LWA_ALPHA);
 
             ShowWindow(g_hOverlayWnd, SW_SHOW);

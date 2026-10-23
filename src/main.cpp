@@ -25,9 +25,7 @@ namespace {
         Shell_NotifyIconW(NIM_MODIFY, &g_nid);
     }
 
-    // KEIN std::thread mehr! OCR läuft synchron auf dem Hauptthread,
-    // wo das WinRT STA-Apartment korrekt initialisiert ist.
-    // Die kurze Blockade (~100-200ms) ist unsichtbar, da kein UI aktiv ist.
+    
     void ProcessScan(const RECT& rect) {
         // 1. Bildschirmbereich aufnehmen (nur im RAM, NICHTS wird auf die Festplatte geschrieben!)
         CapturedImage img = Capture::CaptureRegion(rect);
@@ -36,10 +34,10 @@ namespace {
             return;
         }
 
-        // 2. OCR ausführen (Windows native WinRT Engine, 100% lokal)
+        // 2. OCR ausführen (Windows native WinRT Engine, lokal)
         std::wstring recognized = OCR::RecognizeText(img);
 
-        // Bild-Daten sofort aus dem RAM löschen (Sicherheit & Datenschutz)
+        // Bild-Daten sofort aus dem RAM löschen 
         img.bgraPixels.clear();
         img.bgraPixels.shrink_to_fit();
         img.width = 0;
@@ -166,13 +164,8 @@ namespace {
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     g_hInstance = hInstance;
 
-    // ====================================================================
-    // DPI-Awareness aktivieren (WICHTIG für Laptops mit 125%/150% Skalierung!)
-    // Ohne das sind alle Bildschirmkoordinaten verfälscht.
-    // ====================================================================
     SetProcessDPIAware();
 
-    // Mutex für Single-Instance (nur eine Instanz gleichzeitig)
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"ScreenScannerSingleInstanceMutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"ScreenScanner läuft bereits im Hintergrund (System Tray).", L"ScreenScanner", MB_OK | MB_ICONINFORMATION);

@@ -10,12 +10,10 @@ namespace Capture {
             return result;
         }
 
-        // =======================================================================
         // DATENSCHUTZ-HINWEIS:
         // Die Pixeldaten existieren NUR im RAM (std::vector<uint8_t>).
         // Es wird NICHTS auf die Festplatte, in eine Datei oder ins Netzwerk geschrieben.
         // Nach der OCR-Verarbeitung wird der Vektor sofort geleert und freigegeben.
-        // =======================================================================
 
         HDC hScreenDC = GetDC(nullptr);
         HDC hMemDC = CreateCompatibleDC(hScreenDC);
@@ -23,9 +21,9 @@ namespace Capture {
         BITMAPINFO bmi = {};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
         bmi.bmiHeader.biWidth = width;
-        bmi.bmiHeader.biHeight = -height; // Negativ = Top-Down Bitmap (Zeile 0 oben)
+        bmi.bmiHeader.biHeight = -height; 
         bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;     // 32 Bit = BGRA
+        bmi.bmiHeader.biBitCount = 32;     
         bmi.bmiHeader.biCompression = BI_RGB;
 
         void* pBits = nullptr;
@@ -34,8 +32,7 @@ namespace Capture {
         if (hBitmap && pBits) {
             HGDIOBJ hOldBitmap = SelectObject(hMemDC, hBitmap);
 
-            // Bildschirmbereich in den Speicher-DC kopieren
-            // NUR SRCCOPY verwenden (CAPTUREBLT kann auf manchen Systemen Probleme verursachen)
+            
             BitBlt(hMemDC, 0, 0, width, height, hScreenDC, rect.left, rect.top, SRCCOPY);
 
             result.width = width;
