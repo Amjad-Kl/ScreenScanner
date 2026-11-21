@@ -8,12 +8,15 @@
 
 ## ⚡ Highlights
 
-- 🚀 **Extrem schlank:** Die fertige `.exe` ist nur **~150 KB** groß und verbraucht im Hintergrund ca. **5–8 MB RAM** bei 0% CPU.
+- 🚀 **Extrem schlank:** Die fertige `.exe` ist nur **~400 KB** groß und verbraucht im Hintergrund ca. **5–8 MB RAM** bei 0% CPU.
+- 🔍 **Safe Search Copilot:** Wandelt gescannten Text per LLM-API in optimierte Google-Suchanfragen um (*Suchen* oder *Erklären*).
+- 🛡️ **Lokaler RAM-Datenschutz-Filter:** 100% lokal im RAM maskiert sensible Daten (E-Mails, IPs, URLs, Pfade, Hostnamen, API-Tokens, Hashes, Session-IDs & Shannon-Entropie-Secrets), bevor jemals eine API kontaktiert wird.
+- 📋 **Schnellauswahl-Pop-up:** Nach dem Scan wählbar: *🔍 Im Web suchen*, *💡 Erklären / Definieren* oder *📋 Nur kopieren*.
 - 🌐 **Mehrsprachig (Multi-Language Auto-Detect):** Erkennt automatisch Texte in Deutsch, Arabisch sowie beliebigen weiteren Sprachen (z. B. Englisch, Spanisch, Französisch, Russisch, Chinesisch, Japanisch etc.) ohne manuelles Umschalten.
-- 🔒 **100% Datenschutz & Privatsphäre:** Verwendet ausschließlich die native Windows-eigene OCR-Engine (`winrt::Windows::Media::Ocr`). Kein Byte verlässt deinen Rechner.
+- 🔒 **100% Privatsphäre:** Native Windows-OCR (`winrt::Windows::Media::Ocr`). Nichts wird ungefiltert oder ohne Bestätigung gesendet, nichts auf Festplatte gespeichert.
 - ⌨️ **Globaler Hotkey:** Standardmäßig `Strg + Shift + S` (oder frei konfigurierbar z. B. auf `F9` in `src/config.h`).
 - 🎯 **Flüssiges Overlay:** Abgedunkelter Bildschirm mit Fadenkreuz-Cursor und rechteckiger Bereichsauswahl (unterstützt auch Multi-Monitor-Setups).
-- 📋 **Auto-Clipboard:** Sobald die Maustaste losgelassen wird, landet der erkannte Text sofort in deiner Zwischenablage (`Strg + V`).
+- 📋 **Auto-Clipboard:** Der Originaltext landet immer sofort in deiner Zwischenablage (`Strg + V`).
 - 🔔 **Tray-Notification:** Zeigt eine kurze Benachrichtigung unten rechts mit Textvorschau und Zeichenanzahl.
 
 ---
@@ -23,18 +26,22 @@
 ```
 ScreenScanner/
 ├── bin/
-│   └── ScreenScanner.exe    # Fertige native Standalone-App (~150 KB)
+│   └── ScreenScanner.exe    # Fertige native Standalone-App (~400 KB)
 ├── src/
-│   ├── main.cpp             # WinMain, System Tray & Hotkey Message Loop
+│   ├── main.cpp             # WinMain, System Tray, Pop-up & Hotkey Message Loop
 │   ├── overlay.h / .cpp     # Transparentes Auswahlfenster mit Fadenkreuz
 │   ├── capture.h / .cpp     # GDI Screen-Capture des markierten Bereichs
 │   ├── ocr.h / .cpp         # C++/WinRT Native Windows OCR (Multi-Language)
 │   ├── clipboard.h / .cpp   # Win32 Clipboard (Unicode Text)
+│   ├── sanitizer.h / .cpp   # NEU: Lokaler Regex- & Shannon-Entropie-Filter (RAM-only)
+│   ├── sanitizer_test.cpp   # Eigenständige Test-Suite für den Sanitizer (46 Tests)
+│   ├── query_builder.h/.cpp # NEU: LLM-API-Client via WinHTTP (Search/Explain Prompts + Post-Check)
+│   ├── browser.h / .cpp     # NEU: URL-Encoding & ShellExecuteW für Google-Suche
 │   ├── languages.h          # Konfigurierte OCR-Sprachen (automatisch verwaltet)
-│   └── config.h             # Hotkey- & Farbeinstellungen
+│   └── config.h             # Hotkey-, Farben- & Modus-Einstellungen
 ├── add_languages.bat        # Interaktiver 1-Klick-Sprachmanager (Launcher)
 ├── add_languages.ps1        # PowerShell-Skript: Sprachen wählen, installieren & kompilieren
-├── build.bat                # 1-Klick-Build Skript (MSVC)
+├── build.bat                # 1-Klick-Build Skript (MSVC + WinHTTP)
 └── README.md                # Dokumentation
 ```
 
@@ -112,6 +119,31 @@ namespace Config {
 }
 ```
 Nach einer Änderung einfach `build.bat` erneut ausführen.
+
+### 🤖 Safe Search Copilot konfigurieren (optional)
+
+ScreenScanner funktioniert standardmäßig ohne jede Konfiguration als lokales OCR-Tool. Um den **Safe Search Copiloten** zu aktivieren, setze folgende Umgebungsvariablen in Windows:
+
+| Variable | Beschreibung | Standardwert / Beispiel |
+|---|---|---|
+| `SCREENSCANNER_API_ENDPOINT` | URL der OpenAI-kompatiblen Chat-API (Es geht auch mit Gemini dann : `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) | `https://api.openai.com/v1/chat/completions` |
+| `SCREENSCANNER_API_KEY` | Dein API-Schlüssel (wird niemals geloggt) | `sk-...` |
+| `SCREENSCANNER_API_MODEL` | *(Optional)* Modellname | `gpt-4o-mini` |
+
+**Schnelltest in PowerShell:**
+```powershell
+$env:SCREENSCANNER_API_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+$env:SCREENSCANNER_API_KEY = "dein-api-key"
+.\bin\ScreenScanner.exe
+```
+
+**Dauerhaft in Windows setzen:**
+```powershell
+[Environment]::SetEnvironmentVariable("SCREENSCANNER_API_ENDPOINT", "https://api.openai.com/v1/chat/completions", "User")
+[Environment]::SetEnvironmentVariable("SCREENSCANNER_API_KEY", "dein-api-key", "User")
+```
+
+> **🛡️ Sicherheits-Garantie:** Bevor Text an die API gesendet wird, maskiert der lokale `sanitizer` im Arbeitsspeicher automatisch E-Mails, IPs, Pfade, Token und Entropie-Secrets. Nach der API-Antwort erfolgt ein weiterer Post-Check, bevor die fertige Anfrage im Standardbrowser geöffnet wird.
 
 ---
 
