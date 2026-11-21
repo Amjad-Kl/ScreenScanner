@@ -7,6 +7,9 @@
 #include "ocr.h"
 #include "clipboard.h"
 #include "overlay.h"
+#include "sanitizer.h"
+#include "query_builder.h"
+#include "browser.h"
 
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAY_SCAN 2001
@@ -25,7 +28,8 @@ namespace {
         Shell_NotifyIconW(NIM_MODIFY, &g_nid);
     }
 
-    
+    // OCR & Safe Search Copilot Workflow:
+    // Läuft synchron auf dem Hauptthread (WinRT STA-Apartment).
     void ProcessScan(const RECT& rect) {
         // 1. Bildschirmbereich aufnehmen (nur im RAM, NICHTS wird auf die Festplatte geschrieben!)
         CapturedImage img = Capture::CaptureRegion(rect);
@@ -34,10 +38,10 @@ namespace {
             return;
         }
 
-        // 2. OCR ausführen (Windows native WinRT Engine, lokal)
+        // 2. OCR ausführen (Windows native WinRT Engine, 100% lokal)
         std::wstring recognized = OCR::RecognizeText(img);
 
-        // Bild-Daten sofort aus dem RAM löschen 
+        // Bild-Daten sofort aus dem RAM löschen (Sicherheit & Datenschutz)
         img.bgraPixels.clear();
         img.bgraPixels.shrink_to_fit();
         img.width = 0;
@@ -63,13 +67,77 @@ namespace {
             return;
         }
 
-        // 3. In Zwischenablage kopieren
-        if (Clipboard::SetText(recognized)) {
-            std::wstring preview = recognized.length() > 60 ? recognized.substr(0, 57) + L"..." : recognized;
-            std::wstring msg = L"Kopiert (" + std::to_wstring(recognized.length()) + L" Zeichen):\n" + preview;
-            ShowNotification(L"Text kopiert!", msg);
-        } else {
-            ShowNotification(L"ScreenScanner", L"Fehler: Text konnte nicht in die Zwischenablage kopiert werden.");
+        // 3. Text sofort in die Zwischenablage kopieren (Standard-Verhalten bleibt immer erhalten)
+        bool clipboardOk = Clipboard::SetText(recognized);
+
+        // 4. Lokale Bereinigung im RAM (100% lokal, Maskierung sensibler Daten)
+        std::wstring sanitized = Sanitizer::Sanitize(recognized);
+        std::wstring preview = Sanitizer::GetPreview(sanitized);
+
+        // 5. Schnellauswahl-Pop-up an aktueller Cursorposition anzeigen
+        POINT pt;
+        GetCursorPos(&pt);
+
+        HMENU hMenu = CreatePopupMenu();
+
+        // Vorschau-Header (gekürzter maskierter Text)
+        std::wstring previewHeader = L"Vorschau: " + (preview.length() > 45 ? preview.substr(0, 42) + L"..." : preview);
+        AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, previewHeader.c_str());
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+
+        bool apiReady = QueryBuilder::IsAvailable();
+        UINT searchFlags = MF_STRING | (apiReady ? 0 : MF_GRAYED);
+
+        AppendMenuW(hMenu, searchFlags, Config::ID_MODE_SEARCH, L"🔍 Im Web suchen (Google)");
+        AppendMenuW(hMenu, searchFlags, Config::ID_MODE_EXPLAIN, L"💡 Erklären / Definieren (Google)");
+        AppendMenuW(hMenu, MF_STRING, Config::ID_MODE_COPY, L"📋 Nur kopieren (in Zwischenablage)");
+
+        if (!apiReady) {
+            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Hinweis: Setze SCREENSCANNER_API_KEY für Suche");
+        }
+
+        SetForegroundWindow(g_hWnd);
+        int choice = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, g_hWnd, nullptr);
+        PostMessageW(g_hWnd, WM_NULL, 0, 0);
+        DestroyMenu(hMenu);
+
+        // 6. Ausgewählte Aktion ausführen
+        if (choice == Config::ID_MODE_SEARCH) {
+            ShowNotification(L"ScreenScanner Copilot", L"Generiere präzise Suchanfrage...");
+            std::wstring query = QueryBuilder::GenerateQuery(sanitized, QueryBuilder::SearchMode::Search);
+            if (query.rfind(L"[API-Fehler", 0) == 0 || query.rfind(L"[Netzwerkfehler", 0) == 0 || query.rfind(L"[Parse-Fehler", 0) == 0) {
+                ShowNotification(L"Copilot API-Fehler", query);
+            } else {
+                if (Browser::OpenGoogleSearch(query)) {
+                    ShowNotification(L"Google-Suche geöffnet", L"Suchanfrage: " + query);
+                } else {
+                    ShowNotification(L"ScreenScanner", L"Fehler: Browser konnte nicht geöffnet werden.");
+                }
+            }
+        }
+        else if (choice == Config::ID_MODE_EXPLAIN) {
+            ShowNotification(L"ScreenScanner Copilot", L"Generiere Erklärungssuche...");
+            std::wstring query = QueryBuilder::GenerateQuery(sanitized, QueryBuilder::SearchMode::Explain);
+            if (query.rfind(L"[API-Fehler", 0) == 0 || query.rfind(L"[Netzwerkfehler", 0) == 0 || query.rfind(L"[Parse-Fehler", 0) == 0) {
+                ShowNotification(L"Copilot API-Fehler", query);
+            } else {
+                if (Browser::OpenGoogleSearch(query)) {
+                    ShowNotification(L"Erklärungssuche geöffnet", L"Suchanfrage: " + query);
+                } else {
+                    ShowNotification(L"ScreenScanner", L"Fehler: Browser konnte nicht geöffnet werden.");
+                }
+            }
+        }
+        else {
+            // ID_MODE_COPY oder Menü durch Klick außerhalb / ESC geschlossen
+            if (clipboardOk) {
+                std::wstring clipPreview = recognized.length() > 60 ? recognized.substr(0, 57) + L"..." : recognized;
+                std::wstring msg = L"Kopiert (" + std::to_wstring(recognized.length()) + L" Zeichen):\n" + clipPreview;
+                ShowNotification(L"Text kopiert!", msg);
+            } else {
+                ShowNotification(L"ScreenScanner", L"Fehler: Text konnte nicht in die Zwischenablage kopiert werden.");
+            }
         }
     }
 
@@ -104,6 +172,13 @@ namespace {
         std::wstring modeStr = L"Modus: " + OCR::GetActiveLanguagesSummary() + L" (Auto) ✓";
         AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, modeStr.c_str());
 
+        // Copilot Status im Tray anzeigen
+        if (QueryBuilder::IsAvailable()) {
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Copilot: Safe Search aktiv ✓");
+        } else {
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Copilot: API nicht konfiguriert");
+        }
+
         auto missing = OCR::GetMissingLanguages();
         if (!missing.empty()) {
             std::wstring missingStr = L"Fehlt in Windows: ";
@@ -118,6 +193,7 @@ namespace {
 
         SetForegroundWindow(hWnd);
         TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, nullptr);
+        PostMessageW(hWnd, WM_NULL, 0, 0);
         DestroyMenu(hMenu);
     }
 
@@ -164,8 +240,13 @@ namespace {
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     g_hInstance = hInstance;
 
+    // ====================================================================
+    // DPI-Awareness aktivieren (WICHTIG für Laptops mit 125%/150% Skalierung!)
+    // Ohne das sind alle Bildschirmkoordinaten verfälscht.
+    // ====================================================================
     SetProcessDPIAware();
 
+    // Mutex für Single-Instance (nur eine Instanz gleichzeitig)
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"ScreenScannerSingleInstanceMutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"ScreenScanner läuft bereits im Hintergrund (System Tray).", L"ScreenScanner", MB_OK | MB_ICONINFORMATION);
@@ -182,7 +263,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         return 1;
     }
 
-    // Unsichtbares Fenster für Message-Handling und Tray-Icon registrieren
+    // LLM-QueryBuilder initialisieren (lädt API-Config aus Umgebungsvariablen)
+    QueryBuilder::Initialize();
+
+    // Unsichtbares Fenster für Message-Handling, Tray-Icon und Pop-ups registrieren
     const wchar_t CLASS_NAME[] = L"ScreenScannerHiddenWnd";
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);
@@ -193,8 +277,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     g_hWnd = CreateWindowExW(
         0, CLASS_NAME, L"ScreenScanner",
-        0, 0, 0, 0, 0,
-        HWND_MESSAGE, nullptr, hInstance, nullptr
+        WS_POPUP, 0, 0, 0, 0,
+        nullptr, nullptr, hInstance, nullptr
     );
 
     if (!g_hWnd) {
@@ -211,8 +295,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // Tray Icon initialisieren
     InitTray(g_hWnd, hInstance);
 
-    // Initialer Begrüßungs-Hinweis
-    ShowNotification(L"ScreenScanner aktiv!", L"Drücke Strg+Shift+S um jederzeit Text vom Bildschirm zu scannen.\nKeine Daten werden gespeichert oder gesendet.");
+    // Initialer Begrüßungs-Hinweis mit Copilot-Status
+    if (QueryBuilder::IsAvailable()) {
+        ShowNotification(L"ScreenScanner + Copilot aktiv!",
+            L"Drücke Strg+Shift+S um Text zu scannen, sicher zu bereinigen und im Web zu suchen.\n100% lokaler Datenschutz-Filter aktiv.");
+    } else {
+        ShowNotification(L"ScreenScanner aktiv!",
+            L"Drücke Strg+Shift+S um jederzeit Text vom Bildschirm zu scannen.\nHinweis: Setze SCREENSCANNER_API_KEY für den Safe Search Copilot.");
+    }
 
     // Message Loop
     MSG msg;

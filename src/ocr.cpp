@@ -49,6 +49,53 @@ namespace {
         return false;
     }
 
+    // Skaliert kleine/mittlere Bildausschnitte 2x per bilinearer Interpolation,
+    // damit Windows OCR Sonderzeichen (\, -, ., 0/O) sauber erkennt.
+    CapturedImage UpscaleImage2x(const CapturedImage& src) {
+        if (!src.isValid() || src.width >= 1600 || src.height >= 1000) {
+            return src;
+        }
+
+        const int newW = src.width * 2;
+        const int newH = src.height * 2;
+
+        CapturedImage dst;
+        dst.width = newW;
+        dst.height = newH;
+        dst.bgraPixels.resize(static_cast<size_t>(newW) * newH * 4);
+
+        for (int dy = 0; dy < newH; ++dy) {
+            float sy = (static_cast<float>(dy) + 0.5f) * 0.5f - 0.5f;
+            sy = (std::max)(0.0f, (std::min)(sy, static_cast<float>(src.height - 1)));
+            int y0 = static_cast<int>(sy);
+            int y1 = (std::min)(y0 + 1, src.height - 1);
+            float fy = sy - static_cast<float>(y0);
+
+            for (int dx = 0; dx < newW; ++dx) {
+                float sx = (static_cast<float>(dx) + 0.5f) * 0.5f - 0.5f;
+                sx = (std::max)(0.0f, (std::min)(sx, static_cast<float>(src.width - 1)));
+                int x0 = static_cast<int>(sx);
+                int x1 = (std::min)(x0 + 1, src.width - 1);
+                float fx = sx - static_cast<float>(x0);
+
+                const size_t idx00 = (static_cast<size_t>(y0) * src.width + x0) * 4;
+                const size_t idx10 = (static_cast<size_t>(y0) * src.width + x1) * 4;
+                const size_t idx01 = (static_cast<size_t>(y1) * src.width + x0) * 4;
+                const size_t idx11 = (static_cast<size_t>(y1) * src.width + x1) * 4;
+                const size_t dstIdx = (static_cast<size_t>(dy) * newW + dx) * 4;
+
+                for (int c = 0; c < 4; ++c) {
+                    float top = src.bgraPixels[idx00 + c] * (1.0f - fx) + src.bgraPixels[idx10 + c] * fx;
+                    float bot = src.bgraPixels[idx01 + c] * (1.0f - fx) + src.bgraPixels[idx11 + c] * fx;
+                    float val = top * (1.0f - fy) + bot * fy;
+                    dst.bgraPixels[dstIdx + c] = static_cast<uint8_t>(val + 0.5f);
+                }
+            }
+        }
+
+        return dst;
+    }
+
     // Zählt arabische Unicode-Zeichen
     int CountArabicCharacters(const std::wstring& text) {
         int count = 0;
@@ -359,12 +406,15 @@ namespace OCR {
                 }
             }
 
+            // 2x-Upscaling für präzisere OCR-Erkennung von Sonderzeichen
+            CapturedImage scaledImage = UpscaleImage2x(image);
+
             // Pixeldaten in WinRT IBuffer übertragen
             winrt::Windows::Storage::Streams::DataWriter writer;
             writer.WriteBytes(
                 winrt::array_view<const uint8_t>(
-                    image.bgraPixels.data(),
-                    image.bgraPixels.data() + image.bgraPixels.size()
+                    scaledImage.bgraPixels.data(),
+                    scaledImage.bgraPixels.data() + scaledImage.bgraPixels.size()
                 )
             );
             winrt::Windows::Storage::Streams::IBuffer pixelBuffer = writer.DetachBuffer();
@@ -373,8 +423,8 @@ namespace OCR {
             auto bitmap = winrt::Windows::Graphics::Imaging::SoftwareBitmap::CreateCopyFromBuffer(
                 pixelBuffer,
                 winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
-                image.width,
-                image.height,
+                scaledImage.width,
+                scaledImage.height,
                 winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied
             );
 
