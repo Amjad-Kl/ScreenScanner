@@ -369,21 +369,27 @@ namespace QueryBuilder {
             return sanitizedText;
         }
 
-        const char* systemPrompt = nullptr;
+       // System-Prompt je nach Modus wählen und JSON-sicher escapen
+        std::string rawSystemPrompt;
         if (mode == SearchMode::Search) {
-            systemPrompt =
-                "Du bist ein Suchassistent. Forme den folgenden Text in eine "
-                "pr\\u00e4zise, allgemeine Google-Suchanfrage um. Entferne alle "
-                "Platzhalter wie [EMAIL], [IP], [TOKEN] etc. Gib NUR die "
-                "Suchanfrage zur\\u00fcck, ohne Anf\\u00fchrungszeichen, ohne Erkl\\u00e4rung.";
+            rawSystemPrompt = R"(Du extrahierst aus einem Text eine kurze Google-Suchanfrage (3 bis 7 Wörter).
+Regeln:
+- Behalte die Sprache des Eingabetexts bei (Deutsch bleibt Deutsch, Englisch bleibt Englisch,etc..).
+- Entferne alle Platzhalter in eckigen Klammern wie [EMAIL], [IP], [TOKEN], [PATH], [HOST], [URL], [HASH] komplett.
+- Konzentriere dich auf Fehlercodes, Technologien und das eigentliche Problem.
+- Gib ausschließlich die fertige Suchanfrage aus (ohne Anführungszeichen, ohne Einleitung).
+Beispiel: Zugriff verweigert für [EMAIL] bei [PATH] (Error 0x80070005) -> Zugriff verweigert Error 0x80070005)";
         } else {
-            systemPrompt =
-                "Du bist ein Suchassistent. Forme den folgenden Text in eine "
-                "Google-Suchanfrage um, die auf Erkl\\u00e4rung, Definition oder "
-                "Ursache fokussiert ist. Entferne alle Platzhalter wie [EMAIL], "
-                "[IP], [TOKEN] etc. Gib NUR die Suchanfrage zur\\u00fcck, ohne "
-                "Anf\\u00fchrungszeichen, ohne Erkl\\u00e4rung.";
+            rawSystemPrompt = R"(Du formulierst aus einem Text eine natürliche Google-Suchanfrage (3 bis 7 Wörter), um den Kernbegriff oder Fehler verständlich erklären zu lassen.
+Regeln:
+- Behalte die Sprache des Eingabetexts bei (z. B. "was ist ..." auf Deutsch oder "what is ..." auf Englisch).
+- Entferne alle Platzhalter in eckigen Klammern wie [EMAIL], [IP], [TOKEN], [PATH], [HOST], [URL], [HASH] komplett.
+- Hänge niemals Schlagwörter wie "Definition", "Erklärung" oder "Ursache" hintereinander an.
+- Gib ausschließlich die fertige Suchanfrage aus (ohne Anführungszeichen, ohne Einleitung).
+Beispiel: CORS policy blocked request to [URL] -> what is CORS policy blocked request)";
         }
+
+        std::string systemPrompt = EscapeJsonString(rawSystemPrompt);
 
         std::string userContent = EscapeJsonString(WideToUtf8(sanitizedText));
         std::string modelUtf8   = EscapeJsonString(WideToUtf8(g_apiModel));
